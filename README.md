@@ -60,6 +60,7 @@ bg rm <id>                  # delete a finished task's directory
 | `bg logs <id> -f` | Follow the output as it grows. |
 | `bg kill <id>` | Send SIGTERM (then SIGKILL) to a running task's process group. |
 | `bg rm <id>` | Delete a finished task's directory. Use `--force` to remove a running one. |
+| `bg gc` | Purge old / oversized task logs (see Log retention). `--dry-run` to preview. |
 
 ---
 
@@ -153,34 +154,73 @@ Two panes: the task list on the left, live logs on the right. The focused pane h
 | Key | Action |
 | --- | --- |
 | `Tab` | toggle focus left ↔ right |
-| `h` / `←` | focus the task list |
-| `l` / `→` | focus the log pane |
+| `h` | focus the task list |
+| `l` | focus the log pane |
 | `q` / `Ctrl+C` | quit |
+
+(Arrow keys are **not** focus switches — `←`/`→` horizontally scroll the log.)
 
 **Task list focused**
 
 | Key | Action |
 | --- | --- |
 | `↑` `↓` `j` `k` | move selection |
-| `K` | kill selected running task |
-| `d` | delete selected (non-running) task |
-| `y` | copy the task's log path to the clipboard |
-| `x` | transform the task's output (opens `$EDITOR`) |
+| `Enter` / `a` | open the actions menu for the selected task |
 
 **Log pane focused**
 
+A **line cursor** marks the current line (highlighted background). Cursor moves
+auto-scroll the viewport to keep it visible. Lines are **never wrapped** — long
+lines clip and are reached with horizontal scroll.
+
 | Key | Action |
 | --- | --- |
-| `↑` `↓` `j` `k` | scroll one line |
-| `PgUp` / `Ctrl+B` | page up |
-| `PgDn` / `Ctrl+F` | page down |
-| `Ctrl+U` / `Ctrl+D` | half page up / down |
-| `g` / `Home` | jump to top |
-| `G` / `End` | jump to bottom (re-engages follow) |
+| `↑` `↓` `j` `k` | move the line cursor (auto-scrolls; up disengages follow) |
+| `←` `→` | horizontal scroll (4 cols; reveals clipped long lines) |
+| `PgUp` / `Ctrl+B` | cursor up a page |
+| `PgDn` / `Ctrl+F` | cursor down a page |
+| `Ctrl+U` / `Ctrl+D` | cursor up / down half a page |
+| `g` / `Home` | cursor to first line |
+| `G` / `End` | cursor to last line (re-engages follow) |
+| `V` | toggle visual-line select (`-- VISUAL --`); cursor moves extend it |
+| `y` | copy: the selection if active, else the cursor line |
+| `Y` | copy the task's `out.log` path to the clipboard |
 | `/` | search the log (case-insensitive); `Enter` commits, `Esc` cancels |
 | `n` / `N` | jump to next / previous match (wraps) |
-| `y` | copy the task's log path to the clipboard |
-| `x` | transform the task's output (opens `$EDITOR`) |
+| `Esc` | exit visual mode if active, else clear the search |
+| `a` | open the actions menu for the selected task |
+
+### Actions menu
+
+Press `a` (either pane) or `Enter` (task list focused) to open a modal menu for
+the selected task. Navigate with `↑`/`↓` and `Enter`, or press an action's
+accelerator letter directly; `Esc` closes the menu.
+
+| Item | Accel | Action |
+| --- | --- | --- |
+| Repeat | `r` | relaunch the same command as a **new** task (see below) |
+| Transform | `t` | chain a new task off this one's output (opens `$EDITOR`) |
+| Rename | `n` | give the task an alias shown in the list |
+| Copy path | `y` | copy the task's `out.log` path to the clipboard |
+| Kill | `k` | SIGTERM/SIGKILL a running task (dimmed when not running) |
+| Delete | `d` | remove a finished task's dir (dimmed while running) |
+
+State-invalid items (Kill on a stopped task, Delete on a running one) are dimmed
+and show a hint instead of acting. The direct keys (`K` kill, `d` delete, `r`
+rename, `x` transform) still work as hidden accelerators outside the menu.
+
+Note the two senses of copy: global `y` copies log **line(s)**, global `Y`
+copies the log **path**; the menu's *Copy path* item copies the path.
+
+**Repeat** re-runs `meta.cmd` with the original `displayArgs`, re-applying
+adapter injection from current config, in the source task's working directory
+(`meta.cwd`). The new task records `sourceId` = the original task id.
+
+While the search or rename input bar is active, the footer shows its own help
+(`enter` to confirm, `esc` to cancel). An empty rename clears the alias.
+
+A task's **alias** replaces its command in the list and `bg ls` until cleared; it
+is stored in `meta.json` (`alias`).
 
 Search highlights every match (reverse video) and jumps to the first match
 at/after the current scroll position; `Esc` (outside the input bar) clears a
@@ -203,6 +243,64 @@ grep -i error "$FILE" | sort | uniq -c
 ```
 
 **Follow mode** — new output auto-scrolls to the bottom only when follow is on *and* the viewport is already at the bottom. Any upward scroll disengages follow so you aren't yanked away; `G` / `End` re-engages it. Logs are read incrementally (tail-style), so large sessions stay responsive.
+
+---
+
+## Log retention
+
+`bg` keeps logs bounded in two ways so a long-running or runaway task can't fill
+the disk.
+
+**Per-task live cap.** The supervisor caps each task's `out.log` at **50 MB**
+(override with `BG_MAX_LOG_BYTES=<bytes>`). On reaching the cap it writes one
+marker line `— log truncated at 50MB —` and discards the rest; the file is never
+rewritten or seeked.
+
+**Garbage collection.** `bg gc` purges finished tasks (running tasks are never
+touched). Rules apply in order:
+
+1. **Age purge** — finished tasks whose log is older than `--max-age` lose their
+   `out.log` (meta + status kept; the task then shows grey "output removed").
+2. **Size budget** — while total log bytes exceed `--max-size`, the oldest
+   finished task's `out.log` is deleted first.
+3. **Hard delete** — finished tasks older than `--hard-age` have their whole
+   directory removed.
+4. **Max tasks** — `--max-tasks N` hard-deletes the oldest finished tasks beyond
+   N (disabled by default).
+
+| Flag | Default | Example |
+| --- | --- | --- |
+| `--max-age` | `14d` | `--max-age 72h` |
+| `--max-size` | `500MB` | `--max-size 1GB` |
+| `--hard-age` | `30d` | `--hard-age 0` (disable) |
+| `--max-tasks` | `0` (off) | `--max-tasks 100` |
+| `--dry-run` | — | preview without changing anything |
+
+Omitted flags use the defaults, also settable via `BG_GC_MAX_AGE`,
+`BG_GC_MAX_SIZE`, `BG_GC_HARD_AGE`, `BG_GC_MAX_TASKS`. Durations accept a `d`
+(days) suffix; sizes accept `K`/`KB`/`M`/`MB`/`G`/`GB`.
+
+**On-launch sweep.** Every `bg -- <cmd>` runs a fast, best-effort GC with the
+defaults right after launching (synchronous and bounded — no daemon, errors
+ignored, nothing printed). Run `bg gc` manually for an explicit pass.
+
+**Missing logs.** A task whose `out.log` is gone (GC'd or deleted) shows
+**grey / unknown** in `ls` and the TUI, and `bg logs <id>` prints
+`— output was removed —`.
+
+---
+
+## Notifications
+
+While `bg list` is open in **Ghostty**, you get a desktop notification when a
+task finishes (a running→finished transition). The TUI emits a Ghostty OSC-777
+notification — the detached supervisor has no terminal, so notifications are
+TUI-driven and only fire while the list is open.
+
+On by default. `BG_NOTIFY=0` disables it; `BG_NOTIFY=1` forces emission even when
+Ghostty isn't detected (for other OSC-777-aware terminals). Tasks that were
+already finished when you open the list are seeded silently — only later
+transitions notify.
 
 ---
 
