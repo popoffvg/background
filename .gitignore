@@ -1,0 +1,6 @@
+# build artifacts
+/bin/
+
+# local working notes / Claude Code local state
+CLAUDE.local.md
+.claude/

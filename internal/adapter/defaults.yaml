@@ -1,0 +1,11 @@
+adapters:
+  - name: claude
+    bin: claude
+    when_args: ["-p", "--print"]
+    inject: ["--output-format", "stream-json", "--verbose"]
+    renderer: claude-stream-json
+  - name: opencode
+    bin: opencode
+    when_args: ["run"]
+    inject: ["--format", "json", "--thinking"]
+    renderer: opencode-json

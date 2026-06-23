@@ -1,0 +1,76 @@
+package launcher_test
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/popoffvg/background/internal/launcher"
+	"github.com/popoffvg/background/internal/store"
+)
+
+func TestLaunchWithEnvFileVar(t *testing.T) {
+	self := os.Getenv("BG_SELF")
+	if self == "" {
+		t.Skip("set BG_SELF to bin/bg path to run end-to-end launch test")
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("BG_HOME", tmp)
+
+	// source log file with 3 lines
+	srcLog := filepath.Join(tmp, "source.log")
+	if err := os.WriteFile(srcLog, []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// transform: wc -l "$FILE" → should print 3
+	command := `wc -l "$FILE" > "` + filepath.Join(tmp, "result.txt") + `"`
+	id, err := launcher.LaunchWithEnv("sh", []string{"-c", command}, []string{"-c", command}, []string{"FILE=" + srcLog}, "src-1")
+	if err != nil {
+		t.Fatalf("LaunchWithEnv: %v", err)
+	}
+	if id == "" {
+		t.Fatal("empty id")
+	}
+
+	// wait for completion
+	task, err := store.FindTask(id)
+	if err != nil {
+		t.Fatalf("FindTask: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, exists, _ := store.ReadStatus(task.Dir); exists {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	out, err := os.ReadFile(filepath.Join(tmp, "result.txt"))
+	if err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	got := string(out)
+	if !contains(got, "3") {
+		t.Fatalf("expected wc to report 3 lines, got %q", got)
+	}
+	// SourceID recorded
+	m, _ := store.ReadMeta(task.Dir)
+	if m.SourceID != "src-1" {
+		t.Errorf("SourceID = %q want src-1", m.SourceID)
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) > 0 && (len(sub) == 0 || indexOf(s, sub) >= 0)
+}
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
