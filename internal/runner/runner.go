@@ -31,8 +31,18 @@ func Supervise(taskDir string, command string, args []string) error {
 	rendererName := meta.Renderer
 	useRenderer := rendererName != "" && rendererName != "raw"
 
+	// One shared capped writer guards the per-task disk budget. Both stdout and
+	// stderr (and the renderer output) feed it, so the cap is a total. It is
+	// mutex-guarded for concurrent writers (stderr + renderer goroutine).
+	capped := newCappedWriter(logFile, maxLogBytes())
+
 	cmd := exec.Command(command, args...)
 	cmd.Stdin = nil
+	// Run in the task's recorded working directory when set (empty = inherit the
+	// supervisor's cwd, preserving prior behavior).
+	if meta.Cwd != "" {
+		cmd.Dir = meta.Cwd
+	}
 
 	var pr, pw *os.File
 	done := make(chan struct{})
@@ -42,10 +52,10 @@ func Supervise(taskDir string, command string, args []string) error {
 			return fmt.Errorf("pipe: %w", err)
 		}
 		cmd.Stdout = pw
-		cmd.Stderr = logFile // raw stderr straight to log
+		cmd.Stderr = capped // raw stderr straight to the capped log
 	} else {
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
+		cmd.Stdout = capped
+		cmd.Stderr = capped
 	}
 	SetPgid(cmd)
 
@@ -56,6 +66,15 @@ func Supervise(taskDir string, command string, args []string) error {
 		if pr != nil {
 			pr.Close()
 		}
+		// The command never started (e.g. not a real binary — `exit` is a shell
+		// builtin, not an executable). Record a failure status so the task shows
+		// a non-zero exit instead of hanging forever in "unknown". 127 is the
+		// conventional shell "command not found / cannot execute" code.
+		fmt.Fprintf(logFile, "bg: failed to start command %q: %v\n", command, err)
+		_ = store.WriteStatus(taskDir, store.Status{
+			ExitCode:   127,
+			FinishedAt: time.Now().Format(time.RFC3339),
+		})
 		return fmt.Errorf("start command: %w", err)
 	}
 
@@ -65,7 +84,7 @@ func Supervise(taskDir string, command string, args []string) error {
 		pw.Close()
 		go func() {
 			defer close(done)
-			_ = adapter.GetRenderer(rendererName).Render(pr, logFile)
+			_ = adapter.GetRenderer(rendererName).Render(pr, capped)
 			pr.Close()
 		}()
 	}
