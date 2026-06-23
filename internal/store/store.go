@@ -53,6 +53,7 @@ type Meta struct {
 	Cwd         string   `json:"cwd"`
 	Pid         int      `json:"pid"`
 	SourceID    string   `json:"sourceId,omitempty"`
+	Alias       string   `json:"alias,omitempty"`
 	StartedAt   string   `json:"startedAt"`
 }
 
@@ -123,8 +124,18 @@ func CreateTaskDir(id string) (string, error) {
 	return dir, nil
 }
 
-// State returns human-readable state of the task.
+// LogExists reports whether the task's out.log file is present on disk.
+func (t Task) LogExists() bool {
+	_, err := os.Stat(t.LogPath())
+	return err == nil
+}
+
+// State returns human-readable state of the task. A missing out.log forces
+// "unknown" regardless of status (the log was removed by GC or manually).
 func (t Task) State() string {
+	if !t.LogExists() {
+		return "unknown"
+	}
 	st, exists, err := ReadStatus(t.Dir)
 	if err == nil && exists {
 		if st.Signaled {
@@ -142,8 +153,12 @@ func (t Task) State() string {
 	return "dead"
 }
 
-// StateCategory returns one of: "ok", "fail", "running", "unknown".
+// StateCategory returns one of: "ok", "fail", "running", "unknown". A missing
+// out.log forces "unknown" (grey) regardless of status.
 func (t Task) StateCategory() string {
+	if !t.LogExists() {
+		return "unknown"
+	}
 	st, exists, err := ReadStatus(t.Dir)
 	if err == nil && exists {
 		if st.Signaled {
@@ -173,6 +188,24 @@ func (t Task) DisplayCommand() string {
 		cmd += " " + strings.Join(args, " ")
 	}
 	return cmd
+}
+
+// Label returns the task's display label: its alias if set, else the command.
+func (t Task) Label() string {
+	if t.Meta.Alias != "" {
+		return t.Meta.Alias
+	}
+	return t.DisplayCommand()
+}
+
+// SetAlias persists a user-friendly alias onto the task's meta.json.
+func SetAlias(dir, alias string) error {
+	m, err := ReadMeta(dir)
+	if err != nil {
+		return err
+	}
+	m.Alias = alias
+	return WriteMeta(dir, m)
 }
 
 // LogPath returns the path to the task's log file.

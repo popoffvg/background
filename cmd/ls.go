@@ -36,7 +36,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 		status := colorStatus(t.State(), t.StateCategory(), isTTY)
 		started := startedLabel(t.Meta.StartedAt)
 		age := relAge(t.Meta.StartedAt)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.Meta.ID, status, started, age, t.DisplayCommand())
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.Meta.ID, status, started, age, t.Label())
 	}
 
 	return w.Flush()

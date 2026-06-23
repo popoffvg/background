@@ -68,5 +68,11 @@ func RunLaunch(args []string) error {
 	}
 
 	fmt.Println(id)
+
+	// Best-effort retention sweep with defaults. Synchronous (the CLI exits now,
+	// so a goroutine would be killed) and bounded — GC only stats/acts on tasks
+	// already over thresholds. Errors are ignored and nothing is printed.
+	_, _ = store.GC(store.GCDefaults())
+
 	return nil
 }

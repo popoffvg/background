@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -29,11 +30,17 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !task.LogExists() {
+		_, err := fmt.Fprintln(os.Stdout, "— output was removed —")
+		return err
+	}
+
 	if !logsFollow {
 		data, err := os.ReadFile(task.LogPath())
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil
+				_, err = fmt.Fprintln(os.Stdout, "— output was removed —")
+				return err
 			}
 			return err
 		}

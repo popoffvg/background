@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +14,15 @@ func setupTempStore(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("BG_HOME", dir)
 	return dir
+}
+
+// writeEmptyLog creates an out.log so State()/StateCategory() exercise the
+// log-present path (a missing out.log now forces "unknown").
+func writeEmptyLog(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "out.log"), nil, 0o644); err != nil {
+		t.Fatalf("write out.log: %v", err)
+	}
 }
 
 func TestMetaRoundTrip(t *testing.T) {
@@ -53,6 +63,48 @@ func TestMetaRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSetAliasAndLabel(t *testing.T) {
+	setupTempStore(t)
+
+	id := store.NewID()
+	dir, err := store.CreateTaskDir(id)
+	if err != nil {
+		t.Fatalf("CreateTaskDir: %v", err)
+	}
+	meta := store.Meta{ID: id, Cmd: "bash", Args: []string{"-c", "echo hi"}, StartedAt: time.Now().Format(time.RFC3339)}
+	if err := store.WriteMeta(dir, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	task := store.Task{Dir: dir, Meta: meta}
+	if got := task.Label(); got != "bash -c echo hi" {
+		t.Errorf("Label without alias: got %q want command", got)
+	}
+
+	if err := store.SetAlias(dir, "nightly build"); err != nil {
+		t.Fatalf("SetAlias: %v", err)
+	}
+	got, err := store.ReadMeta(dir)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if got.Alias != "nightly build" {
+		t.Errorf("Alias not persisted: got %q", got.Alias)
+	}
+	if l := (store.Task{Dir: dir, Meta: got}).Label(); l != "nightly build" {
+		t.Errorf("Label with alias: got %q want alias", l)
+	}
+
+	// clearing the alias falls back to the command
+	if err := store.SetAlias(dir, ""); err != nil {
+		t.Fatalf("SetAlias clear: %v", err)
+	}
+	got2, _ := store.ReadMeta(dir)
+	if got2.Alias != "" {
+		t.Errorf("Alias not cleared: got %q", got2.Alias)
+	}
+}
+
 func TestStateExited(t *testing.T) {
 	setupTempStore(t)
 
@@ -72,6 +124,7 @@ func TestStateExited(t *testing.T) {
 		t.Fatalf("WriteStatus: %v", err)
 	}
 
+	writeEmptyLog(t, dir)
 	task := store.Task{Dir: dir, Meta: meta}
 	if state := task.State(); state != "exited(0)" {
 		t.Errorf("State: got %q want %q", state, "exited(0)")
@@ -96,6 +149,7 @@ func TestStateKilled(t *testing.T) {
 		t.Fatalf("WriteStatus: %v", err)
 	}
 
+	writeEmptyLog(t, dir)
 	task := store.Task{Dir: dir, Meta: meta}
 	if state := task.State(); state != "killed" {
 		t.Errorf("State: got %q want %q", state, "killed")
@@ -117,6 +171,7 @@ func TestStateDead(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
+	writeEmptyLog(t, dir)
 	task := store.Task{Dir: dir, Meta: meta}
 	state := task.State()
 	// No status.json and pid doesn't exist → dead
@@ -140,6 +195,7 @@ func TestStateRunning(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
+	writeEmptyLog(t, dir)
 	task := store.Task{Dir: dir, Meta: meta}
 	if state := task.State(); state != "running" {
 		t.Errorf("State: got %q want running", state)
