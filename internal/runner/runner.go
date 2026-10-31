@@ -100,23 +100,25 @@ func Supervise(taskDir string, command string, args []string) error {
 		<-done
 	}
 
+	return store.WriteStatus(taskDir, ExitStatus(waitErr))
+}
+
+// ExitStatus turns the error of exec.Cmd.Wait into the status.json record.
+// An error that is not an exit error counts as exit code 1.
+func ExitStatus(waitErr error) store.Status {
 	status := store.Status{
 		FinishedAt: time.Now().Format(time.RFC3339),
 	}
-
 	var exitErr *exec.ExitError
 	if waitErr != nil {
 		if errors.As(waitErr, &exitErr) {
 			status.ExitCode = exitErr.ExitCode()
-			if exitErr.ExitCode() == -1 {
-				status.Signaled = true
-			}
+			status.Signaled = exitErr.ExitCode() == -1
 		} else {
 			status.ExitCode = 1
 		}
 	}
-
-	return store.WriteStatus(taskDir, status)
+	return status
 }
 
 // Launch starts the supervisor as a detached process.

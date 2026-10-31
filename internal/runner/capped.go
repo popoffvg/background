@@ -39,6 +39,12 @@ func newCappedWriter(w io.Writer, capBytes int64) *cappedWriter {
 	return &cappedWriter{w: w, cap: capBytes}
 }
 
+// NewTaskLogWriter caps the bytes written to w at the per-task log budget (BG_MAX_LOG_BYTES).
+// It is safe for concurrent writers, so stdout and stderr can share one budget.
+func NewTaskLogWriter(w io.Writer) io.Writer {
+	return newCappedWriter(w, maxLogBytes())
+}
+
 // Write writes up to the remaining budget, then emits the marker once and
 // discards everything after. It reports len(p) written to the caller so the
 // child process never sees a short write / EPIPE-style error.

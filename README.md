@@ -304,12 +304,32 @@ transitions notify.
 
 ---
 
+## Use as a library
+
+The `launch` package runs a command from another Go program and records it as a bg task, so `bg ls`, `bg logs`, and the TUI show it. The call waits for the exit; the output goes both to your writers and to the capped task log.
+
+```go
+import "github.com/popoffvg/background/launch"
+
+var out bytes.Buffer
+result, err := launch.Run(ctx, "codex", []string{"exec", "--json", "-"}, launch.Options{
+	Stdin:  strings.NewReader(prompt),
+	Stdout: &out,
+})
+// result.TaskID is the bg task id; result.ExitCode is the exit code. A non-zero exit is not an error.
+```
+
+When `ctx` ends, `Run` sends SIGTERM to the process group and returns `ctx.Err()`. No supervisor process is started, so the command stops with your program.
+
+---
+
 ## Project layout
 
 ```
 main.go                 entry point; intercepts `bg -- …`
 cmd/                    cobra commands (launch, list, ls, logs, kill, rm, supervise)
 internal/store/         task directory, meta/status I/O, status derivation
+launch/                 library entry point: run a command as a recorded task
 internal/runner/        detached supervisor + process control
 internal/adapter/       adapter config + stream renderers (defaults.yaml)
 internal/tui/           Bubble Tea UI + incremental log tailing
